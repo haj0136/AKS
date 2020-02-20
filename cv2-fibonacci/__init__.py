@@ -14,6 +14,7 @@ def elias_decode(encoded_string):
         binary = encoded_string[index: index + length + 1]
         numbers.append(int(binary, 2))
         index = index + length + 1
+        length = 0
     return numbers
 
 
