@@ -1,7 +1,7 @@
 import math
 
 
-def get_manhatton(dict1: dict, dict2: dict):
+def get_manhattan(dict1: dict, dict2: dict):
     unique_chars = set(dict1.keys()).union(set(dict2.keys()))
 
     result = 0
@@ -40,6 +40,7 @@ def get_probability(message):
     print(f"entropy = {entropy}")
     return charDict
 
+
 if __name__ == '__main__':
     f = open("../data/czech.txt", "r", encoding="utf8")
     czech_message = f.read().lower()
@@ -49,10 +50,9 @@ if __name__ == '__main__':
     print("CZECH")
     cz_dict = get_probability(czech_message)
 
-
     print(cz_dict)
     print(len(cz_dict))
     print("ENGLISH")
     en_dict = get_probability(english_message)
 
-    print(get_manhatton(cz_dict, en_dict))
+    print(get_manhattan(cz_dict, en_dict))
