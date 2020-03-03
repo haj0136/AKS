@@ -86,3 +86,17 @@ if __name__ == '__main__':
         print(f"Time: {end - start}")
         print(f"Symbols count: {len(decoded_string)}")
         # print(decoded_string)
+
+
+# 1) Which of these codes cannot be Huffman codes for any probability assignment and why?
+# a) {0, 10, 11} - yes
+# b) {00, 01, 10, 110} - No
+# c) {01, 10} - No
+#
+# 2) Classes of codes. Consider the code {0, 01}.
+# b) Is it uniquely decodable? - YES
+# c) It it nonsingular? - YES
+#
+# 3) Optimal word lengths.
+# a) Can l=(1, 2, 2) be the word lengths of a binary Huffman code? - YES
+# a) Can l=(2, 2, 3, 3) be the word lengths of a binary Huffman code? - NO
