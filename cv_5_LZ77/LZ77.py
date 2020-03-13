@@ -3,83 +3,62 @@ from bitarray import bitarray
 
 class Compressor:
     MAX_WINDOW_SIZE = 32768
-    LOOK_AHEAD_SIZE = 15
+    DISTANCE_BITS = 12
+    LENGTH_BITS = 4
 
-    def __init__(self, window_size=20):
+    def __init__(self, window_size=20, match_size=15, verbose=False):
         self.window_size = min(window_size, self.MAX_WINDOW_SIZE)
-        self.lookahead_buffer_size = 3  # length of match is at most 4 bits
+        self.lookahead_buffer_size = match_size
+        self.verbose = verbose
 
-    def compress(self, input_file, output_file_path=None, verbose=False):
-        """
-        Given the path of an input file, its content is compressed by applying a simple
-        LZ77 compression algorithm.
-        The compressed format is:
-        0 bit followed by 8 bits (1 byte character) when there are no previous matches
-            within window
-        1 bit followed by 12 bits pointer (distance to the start of the match from the
-            current position) and 4 bits (length of the match)
+        while self.window_size >= 2 ** self.DISTANCE_BITS:
+            self.DISTANCE_BITS += 1
+        while self.lookahead_buffer_size >= 2 ** self.LENGTH_BITS:
+            self.LENGTH_BITS += 1
+        if verbose:
+            print(f"Distance bits = {self.DISTANCE_BITS}")
+            print(f"Length bits = {self.LENGTH_BITS}")
 
-        If a path to the output file is provided, the compressed data is written into
-        a binary file. Otherwise, it is returned as a bitarray
-        if verbose is enabled, the compression description is printed to standard output
-        """
+    def compress(self, input_file, output_file_path=None):
         data = input_file
         i = 0
         output_buffer = bitarray(endian='big')
+        triplets = 0
 
         while i < len(data):
-            # print i
-
             match = self.find_longest_match(data, i)
 
-            if match:
-                # Add 1 bit flag, followed by 12 bit for distance, and 4 bit for the length
-                # of the match
+            if match:  # WRITE binary to output buffer distance|length|symbol
                 (bestMatchDistance, bestMatchLength) = match
+                if i + bestMatchLength < len(data):
+                    symbol = data[i + bestMatchLength]
+                else:
+                    symbol = "\x00"
+                distance_binary = f"{bestMatchDistance:0{self.DISTANCE_BITS}b}"
+                if len(distance_binary) > self.DISTANCE_BITS:
+                    raise ValueError(f"Distance binary string > {self.DISTANCE_BITS}")
+                output_buffer += bitarray(distance_binary)
+                length_binary = f"{bestMatchLength:0{self.LENGTH_BITS}b}"
+                if len(length_binary) > self.LENGTH_BITS:
+                    raise ValueError(f"Length binary string > {self.LENGTH_BITS}")
+                output_buffer += bitarray(length_binary)
+                symbol_bytes = symbol.encode()
+                if len(symbol_bytes) > 1:
+                    raise ValueError("Symbol encode error")
+                output_buffer.frombytes(symbol_bytes)
+                triplets += 1
 
-                output_buffer.append(True)
-                output_buffer.frombytes(chr(bestMatchDistance >> 4))
-                output_buffer.frombytes(chr(((bestMatchDistance & 0xf) << 4) | bestMatchLength))
+                if self.verbose:
+                    print("<%i, %i, %s>" % (bestMatchDistance, bestMatchLength, symbol))
 
-                if verbose:
-                    print("<1, %i, %i>" % (bestMatchDistance, bestMatchLength))
+                i += bestMatchLength + 1
 
-                i += bestMatchLength
-
-            else:
-                # No useful match was found. Add 0 bit flag, followed by 8 bit for the character
-                output_buffer.append(False)
-                output_buffer.fromstring(data[i])
-
-                if verbose:
-                    print("<0, %s>" % data[i])
-
-                i += 1
-
-        # fill the buffer with zeros if the number of bits is not a multiple of 8
-        output_buffer.fill()
-
-        # write the compressed data into a binary file if a path is provided
         if output_file_path:
-            try:
-                with open(output_file_path, 'wb') as output_file:
-                    output_file.write(output_buffer.tobytes())
-                    print("File was compressed successfully and saved to output path ...")
-                    return None
-            except IOError:
-                print
-                'Could not write to output file path. Please check if the path is correct ...'
-                raise
+            with open(output_file_path, "wb") as file:
+                output_buffer.tofile(file)
+        return output_buffer, triplets
 
-        # an output file path was not provided, return the compressed data
-        return output_buffer
-
-    def decompress(self, input_file_path, output_file_path=None):
-        """
-        Given a string of the compressed file path, the data is decompressed back to its
-        original form, and written into the output file path if provided. If no output
-        file path is provided, the decompressed data is returned as a string
-        """
+    def decompress(self, input_file_path):
         data = bitarray(endian='big')
         output_buffer = []
 
@@ -88,81 +67,51 @@ class Compressor:
             with open(input_file_path, 'rb') as input_file:
                 data.fromfile(input_file)
         except IOError:
-            print
-            'Could not open input file ...'
-            raise
+            raise IOError('Could not open input file ...')
 
-        while len(data) >= 9:
+        while len(data) >= 24:
 
-            flag = data.pop(0)
+            distance = int(data[0:self.DISTANCE_BITS].to01(), 2)
+            length_end_index = (self.DISTANCE_BITS + self.LENGTH_BITS)
+            length = int(data[self.DISTANCE_BITS:length_end_index].to01(), 2)
+            symbol = data[length_end_index:length_end_index + 8].tostring()
 
-            if not flag:
-                byte = data[0:8].tobytes()
-
-                output_buffer.append(byte)
-                del data[0:8]
+            del data[0:length_end_index + 8]
+            if self.verbose:
+                print(f"<{distance}, {length}, {symbol}>")
+            if length == 0:
+                output_buffer.append(symbol)
             else:
-                byte1 = ord(data[0:8].tobytes())
-                byte2 = ord(data[8:16].tobytes())
+                current_index = len(output_buffer)
+                for ref in range(length):
+                    char = output_buffer[current_index - distance + ref]
+                    output_buffer.append(char)
+                output_buffer.append(symbol)
 
-                del data[0:16]
-                distance = (byte1 << 4) | (byte2 >> 4)
-                length = (byte2 & 0xf)
-
-                for i in range(length):
-                    output_buffer.append(output_buffer[-distance])
         out_data = ''.join(output_buffer)
 
-        if output_file_path:
-            try:
-                with open(output_file_path, 'wb') as output_file:
-                    output_file.write(out_data)
-                    print
-                    'File was decompressed successfully and saved to output path ...'
-                    return None
-            except IOError:
-                print
-                'Could not write to output file path. Please check if the path is correct ...'
-                raise
         return out_data
 
     def find_longest_match(self, data, current_position):
-        """
-        Finds the longest match to a substring starting at the current_position
-        in the lookahead buffer from the history window
-        """
-        end_of_buffer = min(current_position + self.lookahead_buffer_size, len(data) + 1)
+        end_of_buffer = min(current_position + self.lookahead_buffer_size, len(data))
         start_index = max(0, current_position - self.window_size)
 
-        best_match_distance = -1
-        best_match_length = -1
-        print(f"Search buffer {data[start_index:current_position]}")
-        print(f"Ahead buffer {data[current_position:end_of_buffer]}")
+        best_match_distance = 0
+        best_match_length = 0
+        # print(f"Search buffer: {data[start_index:current_position]}")
+        # print(f"Ahead buffer: {data[current_position:end_of_buffer]}")
 
-        next_char = False
+        for j in range(start_index, current_position):  # search buffer
+            match_length = 0
+            match_distance = current_position - j
+            for i in range(current_position, end_of_buffer):  # look-ahead buffer
+                if data[j + match_length] == data[i]:
+                    match_length += 1
+                else:
+                    break
 
-        for j in range(current_position + 1, end_of_buffer + 1):
+            if match_length > best_match_length:
+                best_match_distance = match_distance
+                best_match_length = match_length
 
-            substring = data[current_position:j]
-
-            for i in range(start_index, current_position):
-
-                repetitions = len(substring) / (current_position - i)
-
-                last = len(substring) % (current_position - i)
-
-                # matched_string = data[i:current_position] * repetitions + data[i:i + last]
-                matched_string = data[i:current_position] + data[i:i + last]
-
-                if matched_string == substring and len(substring) > best_match_length:
-                    best_match_distance = current_position - i
-                    best_match_length = len(substring)
-                    next_char = True
-
-            if not next_char:
-                break
-            next_char = False
-
-        if best_match_distance > 0 and best_match_length > 0:
-            return best_match_distance, best_match_length
-        return None
+        return best_match_distance, best_match_length
